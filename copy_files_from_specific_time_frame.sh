@@ -335,7 +335,13 @@ function getFileList() {
   local upTo="${3}"
   local prefix="${4}"
   local srcTerm="${5}"
-  find "${src}" -newermt "${since}" -not -newermt "${upTo}" -type f "${srcTerm}" -printf "${prefix}%p\n"
+
+  if [[ -z "${srcTerm}" ]]; then
+    find "${src}" -newermt "${since}" -not -newermt "${upTo}" -type f -printf "${prefix}%p\n"
+  else
+    find "${src}" -newermt "${since}" -not -newermt "${upTo}" -type f -iname "${srcTerm}" -printf "${prefix}%p\n"
+  fi
+
 }
 
 function getFullFileList() {
