@@ -46,7 +46,7 @@ Optional args:
 [-S | --sum]                    Get summary of the collected files and exit 
 [-l | --filter-list <txt file>] List of mongo id's that would be used as filter [ must be specified with --ignore or --exclusive switch but can't be specified with --filter ]
 [-F | --filter <arg>]           Mongo id that would be used as filter [ must  be specified with --ignore or --exclusive switch but can't be specified with --filter-list ]
-[-x | --exclusive]               Leave only files/directories that match the filter
+[-x | --exclusive]              Leave only files/directories that match the filter
 [-i | --ignore]                 Ignore files/directories that match the filter
 [-r | --rename <csv file>]      Rename folders during copy
 [-p | --pattern]                Specify pattern to search for, exp: *.ts"
@@ -71,7 +71,7 @@ for item in "${args[@]}"; do
   "-c" | "--clear")
     truncate -s 0 "${HISTORY_FILE}"
     echo "${0} history was cleared"
-    break
+    exit 0
     ;;
 
   "-a" | "--auto")
@@ -118,7 +118,7 @@ for item in "${args[@]}"; do
     ;;
 
   "-p" | "--pattern")
-    [ "${args[((i + 1))]:0:1}" != '-' ] && pattern="-iname \"${args[((i + 1))]}\""
+    [ "${args[((i + 1))]:0:1}" != '-' ] && pattern="${args[((i + 1))]}"
     ;;
 
   "-f" | "--from")
@@ -233,7 +233,7 @@ function getRaw() {
   )
   while IFS= read -r arg; do
     line="${arg##*:}"
-    total=$((total + $(du -B 1K "$line" | awk '{print $1}')))
+    total=$((total + $(du -b "$line" | awk '{print $1}')))
     #       let "total+=$(du -B 1K "$line" | awk '{print $1}')"
   done <<<"${data}"
   echo $total
@@ -242,14 +242,16 @@ function getRaw() {
 function prettyFormat() {
   local raw="$1"
   unit=$(printf %.3f "$(echo "$raw / 1024" | bc -l)")
-  if [ "$(echo "${unit} < 1 " | bc -l)" -eq 0 ]; then
-    if [ "$(echo "${unit} < 1000 " | bc -l)" -eq 1 ]; then
-      totalSize="${unit}MB"
+  if [ "$(echo "${unit} < 1" | bc -l)" -eq 0 ]; then
+    if [ "$(echo "${unit} <= 1024" | bc -l)" -eq 1 ]; then
+      totalSize="${unit}KB"
+    elif [ "$(echo "${unit} < 1048576" | bc -l)" -eq 1 ]; then
+      totalSize="$(printf %.3f "$(echo "$unit / 1024" | bc -l)")MB"
     else
-      totalSize="$(printf %.3f "$(echo "$unit / 1024" | bc -l)")GB"
+      totalSize="$(printf %.3f "$(echo "$unit / 1024 / 1024" | bc -l)")GB"
     fi
   else
-    totalSize="${raw}KB"
+    totalSize="${raw} Bytes"
   fi
   echo "${totalSize}"
 
@@ -289,7 +291,7 @@ function rename() {
     while IFS=',' read -r id name; do
       if [[ "$LINE" =~ ${id} ]]; then
         cd "${LINE%${id}*}" || exit
-#        cd "$(echo "${LINE}" | sed "s!${id}.*!!")" || exit
+        # cd "$(echo "${LINE}" | sed "s!${id}.*!!")" || exit
         if [ -d "${id}" ]; then
           mv "${id}" "${name}"
           printf "\n%s\n" "${LINE} -> ${name}"
@@ -446,11 +448,11 @@ function main() {
     sshHelper "${ssh}" "getFileList" "${parms[@]}" >"${Helper}"
     isFileEmpty "${Helper}" "${HOSTNAME}"
     unset parms
-    sshHelper "${ssh}" "getFullFileList" "$(< "${Helper}" tr '\n' ' ')" >"${destination}/${HOSTNAME}_Full_List.tmp"
+    sshHelper "${ssh}" "getFullFileList" "$(<"${Helper}")" >"${destination}/${HOSTNAME}_Full_List.tmp"
   else
-    getFileList "${source}" "${from}" "${to}" "${pattern}" >"${Helper}"
+    getFileList "${source}" "${from}" "${to}" '' "${pattern}" >"${Helper}"
     isFileEmpty "${Helper}" "${HOSTNAME}"
-    getFullFileList "$(< "${Helper}" tr '\n' ' ')" > "${destination}/${HOSTNAME}_Full_List.tmp"
+    getFullFileList "$(<"${Helper}")" >"${destination}/${HOSTNAME}_Full_List.tmp"
   fi
 
   sort -Vk9 "${destination}/${HOSTNAME}_Full_List.tmp" >"${destination}/${HOSTNAME}_Full_List.txt"
@@ -462,20 +464,20 @@ function main() {
   if [ "${res}" == "S" ]; then
     if [[ "${TYPE}" == "SSH" ]]; then
       parm=("${Helper}")
-      echo "Total Size: $(prettyFormat "$(sshHelper "${SOURCE_ARR}" "getRaw" "$(tr < "${Helper}" '\n' ' ')")")"
+      echo "Total Size: $(prettyFormat "$(sshHelper "${SOURCE_ARR}" "getRaw" "$(<"${Helper}")")")"
     else
-      echo "Total Size: $(prettyFormat "$(getRaw "$(tr <"${Helper}" '\n' ' ')")")"
+      echo "Total Size: $(prettyFormat "$(getRaw "$(<"${Helper}")")")"
     fi
-    echo "Number of files: $(< "${destination}/${HOSTNAME}_Filtered_List.txt" wc -l)"
-    rm -rf "${tmpList}" "${Helper}" >/dev/null 2>&1
+    echo "Number of files: $(wc <"${destination}/${HOSTNAME}_Filtered_List.txt" -l)"
+    #rm -rf "${tmpList}" "${Helper}" >/dev/null 2>&1
   else
     while true; do
       if [[ "${TYPE}" == "SSH" ]]; then
         list="${destination}/${HOSTNAME}_Filtered_List.txt"
-        sourceSize=$(sshHelper "${SOURCE_ARR}" "getRaw" "$(tr < "${list}" '\n' ' ')")
+        sourceSize=$(sshHelper "${SOURCE_ARR}" "getRaw" "$(<"${list}")")
       else
         FullList=${destination}/${HOSTNAME}_Filtered_List.txt
-        sourceSize=$(getRaw "$(tr < "${FullList}" '\n' ' ')")
+        sourceSize=$(getRaw "$(<"${FullList}")")
       fi
       destinationFreeSize=$(df "${destination}" | sed 1d | tr -s " " | cut -d' ' -f4)
       if [ "${sourceSize}" -gt "${destinationFreeSize}" ]; then
@@ -516,4 +518,3 @@ function main() {
 }
 
 main
-
