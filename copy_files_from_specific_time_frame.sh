@@ -173,6 +173,7 @@ done
 function test_if_ssh_path() {
   local arg=$1
   local stat=1
+  local ip
   ip=$(echo "${arg}" | grep -o '[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}')
   if [[ "${ip}" =~ [0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3} ]]; then
     IFS='.' read -ra ip <<<"${ip}"
@@ -212,13 +213,13 @@ function sshHelper() {
   local func="${2}"
   shift 2
   args=("$@")
-  parms=()
+  local params=()
   for item in "${args[@]}"; do
-    parms+=("${item}")
+    params+=("${item}")
   done
   IFS=':' read -ra a <<<"${sshPath}"
   # shellcheck disable=SC2029
-  ssh "${a[0]}" "$(declare -f "$func"); $func ${parms[*]};"
+  ssh "${a[0]}" "$(declare -f "$func"); $func ${params[*]};"
 }
 
 function processDone() {
@@ -227,12 +228,14 @@ function processDone() {
 
 function getRaw() {
   var=("$@")
+  local data
   data=$(
     IFS=$'\n'
     echo "${var[*]}"
   )
   while IFS= read -r arg; do
     line="${arg##*:}"
+    local total
     total=$((total + $(du -b "$line" | awk '{print $1}')))
     #       let "total+=$(du -B 1K "$line" | awk '{print $1}')"
   done <<<"${data}"
@@ -240,7 +243,9 @@ function getRaw() {
 }
 
 function prettyFormat() {
-  local raw="$1"
+  local raw="${1}"
+  local unit
+  local totalSize
   unit=$(printf %.3f "$(echo "$raw / 1024" | bc -l)")
   if [ "$(echo "${unit} < 1" | bc -l)" -eq 0 ]; then
     if [ "$(echo "${unit} <= 1024" | bc -l)" -eq 1 ]; then
@@ -346,6 +351,7 @@ function getFileList() {
 
 function getFullFileList() {
   var=("$@")
+  local fileList
   fileList=$(
     IFS=$'\n'
     echo "${var[*]}"
@@ -371,11 +377,11 @@ function isFileEmpty() {
 function FilterExist() {
   local tmpPath="${1}"
   local fullPath="${2}"
-  local parm="${3}"
+  local param="${3}"
   local keep="${4}"
   if [ -n "${param}" ]; then
     [ -f "${tmpPath}" ] && truncate -s 0 "${tmpPath}"
-    for term in ${parm}; do
+    for term in ${param}; do
       if [ "${keep}" -eq 0 ]; then
         sed -i "/\b${term}\b/d" "${fullPath}"
       else
@@ -386,141 +392,141 @@ function FilterExist() {
   fi
 }
 
-function main() {
-  from=$(validateDate "${from}" "%Y%m%d %H:%M" "From")
-  to=$(validateDate "${to}" "%Y%m%d %H:%M" "To")
-  validateDiff "$from" "$to"
-  history -s "${from}"
-  history -s "${to}"
-  history -w "$HISTORY_FILE"
+#function main() {
+from=$(validateDate "${from}" "%Y%m%d %H:%M" "From")
+to=$(validateDate "${to}" "%Y%m%d %H:%M" "To")
+validateDiff "$from" "$to"
+history -s "${from}"
+history -s "${to}"
+history -w "$HISTORY_FILE"
 
-  while (! path_exist "${source}"); do
-    [ -z "${source}" ] && source="Path"
-    echo
-    echo "$source dose not exist, Please try again"
-    echo
-    getSource
-  done
+while (! path_exist "${source}"); do
+  [ -z "${source}" ] && source="Path"
+  echo
+  echo "$source dose not exist, Please try again"
+  echo
+  getSource
+done
 
-  if [ "$res" == "S" ]; then
-    destination="/tmp"
-  else
-    while (! path_exist "${destination}"); do
-      if ! mkdir -p ${destination} >/dev/null 2>&1; then
-        getDestination
-      fi
-    done
-  fi
-  if test_if_ssh_path ${source}; then
-    declare -x TYPE="SSH"
-    IFS=':' read -ra a <<<${source}
-    declare SOURCE_ARR="${a[0]}"
-    declare HOSTNAME
-    HOSTNAME=$(sshHelper "${SOURCE_ARR}" "getHostName")
-  else
-    declare -x TYPE="LOCAL"
-    declare HOSTNAME
-    HOSTNAME=$(getHostName)
-  fi
-
-  history -s $source
-  history -s $destination
-  history -w "${HISTORY_FILE}"
-
-  [ "${destination: -1}" == "/" ] && destination="${destination::-1}"
-  base_destination=${destination}
-  extractDataTime "${from}" "From"
-  extractDataTime "${to}" "To"
-
-  if [ "${fromDate}" == "${toDate}" ]; then
-    Date=${fromDate}
-    Time=${fromTime}-${toTime}
-    destination="${destination}/${HOSTNAME}/${Date}/${Time}"
-  else
-    Date="${fromDate}T${fromTime}__${toDate}T${toTime}"
-    destination="${destination}/${HOSTNAME}/${Date}"
-  fi
-  if (! path_exist "${destination}"); then
-    mkdir -p "${destination}"
-  fi
-  [ ! "${source: -1}" == "/" ] && source="${source}/"
-
-  tmpList="/tmp/${Date}-${Time}.txt"
-  Helper="/tmp/${Date}-${Time}.tmp"
-  if [[ "${TYPE}" == "SSH" ]]; then
-    src=${source##*:}
-    ssh=${source%:*}
-    parms=("${src}" "\"${from}\"" "\"${to}\"" "${ssh}:" "${pattern}")
-    sshHelper "${ssh}" "getFileList" "${parms[@]}" >"${Helper}"
-    isFileEmpty "${Helper}" "${HOSTNAME}"
-    unset parms
-    sshHelper "${ssh}" "getFullFileList" "$(<"${Helper}")" >"${destination}/${HOSTNAME}_Full_List.tmp"
-  else
-    getFileList "${source}" "${from}" "${to}" '' "${pattern}" >"${Helper}"
-    isFileEmpty "${Helper}" "${HOSTNAME}"
-    getFullFileList "$(<"${Helper}")" >"${destination}/${HOSTNAME}_Full_List.tmp"
-  fi
-
-  sort -Vk9 "${destination}/${HOSTNAME}_Full_List.tmp" >"${destination}/${HOSTNAME}_Full_List.txt"
-  rm -f "${destination}/${HOSTNAME}_Full_List.tmp"
-  FilterExist "${destination}/${HOSTNAME}_List.txt" "${destination}/${HOSTNAME}_Full_List.txt" "${filter}" ${mode}
-  sort -V "${Helper}" >"${destination}/${HOSTNAME}_Filtered_List.txt"
-  grep -oP "^$source\K.*" "${destination}/${HOSTNAME}_Filtered_List.txt" >"${tmpList}"
-
-  if [ "${res}" == "S" ]; then
-    if [[ "${TYPE}" == "SSH" ]]; then
-      parm=("${Helper}")
-      echo "Total Size: $(prettyFormat "$(sshHelper "${SOURCE_ARR}" "getRaw" "$(<"${Helper}")")")"
-    else
-      echo "Total Size: $(prettyFormat "$(getRaw "$(<"${Helper}")")")"
+if [ "$res" == "S" ]; then
+  destination="/tmp"
+else
+  while (! path_exist "${destination}"); do
+    if ! mkdir -p ${destination} >/dev/null 2>&1; then
+      getDestination
     fi
-    echo "Number of files: $(wc <"${destination}/${HOSTNAME}_Filtered_List.txt" -l)"
-    #rm -rf "${tmpList}" "${Helper}" >/dev/null 2>&1
+  done
+fi
+if test_if_ssh_path ${source}; then
+  declare -x TYPE="SSH"
+  IFS=':' read -ra a <<<${source}
+  declare SOURCE_ARR="${a[0]}"
+  declare HOSTNAME
+  HOSTNAME=$(sshHelper "${SOURCE_ARR}" "getHostName")
+else
+  declare -x TYPE="LOCAL"
+  declare HOSTNAME
+  HOSTNAME=$(getHostName)
+fi
+
+history -s $source
+history -s $destination
+history -w "${HISTORY_FILE}"
+
+[ "${destination: -1}" == "/" ] && destination="${destination::-1}"
+base_destination=${destination}
+extractDataTime "${from}" "From"
+extractDataTime "${to}" "To"
+
+if [ "${fromDate}" == "${toDate}" ]; then
+  Date=${fromDate}
+  Time=${fromTime}-${toTime}
+  destination="${destination}/${HOSTNAME}/${Date}/${Time}"
+else
+  Date="${fromDate}T${fromTime}__${toDate}T${toTime}"
+  destination="${destination}/${HOSTNAME}/${Date}"
+fi
+if (! path_exist "${destination}"); then
+  mkdir -p "${destination}"
+fi
+[ ! "${source: -1}" == "/" ] && source="${source}/"
+
+tmpList="/tmp/${Date}-${Time}.txt"
+Helper="/tmp/${Date}-${Time}.tmp"
+if [[ "${TYPE}" == "SSH" ]]; then
+  src=${source##*:}
+  ssh=${source%:*}
+  params=("${src}" "\"${from}\"" "\"${to}\"" "${ssh}:" "${pattern}")
+  sshHelper "${ssh}" "getFileList" "${params[@]}" >"${Helper}"
+  isFileEmpty "${Helper}" "${HOSTNAME}"
+  unset params
+  sshHelper "${ssh}" "getFullFileList" "$(<"${Helper}")" >"${destination}/${HOSTNAME}_Full_List.tmp"
+else
+  getFileList "${source}" "${from}" "${to}" '' "${pattern}" >"${Helper}"
+  isFileEmpty "${Helper}" "${HOSTNAME}"
+  getFullFileList "$(<"${Helper}")" >"${destination}/${HOSTNAME}_Full_List.tmp"
+fi
+
+sort -Vk9 "${destination}/${HOSTNAME}_Full_List.tmp" >"${destination}/${HOSTNAME}_Full_List.txt"
+rm -f "${destination}/${HOSTNAME}_Full_List.tmp"
+FilterExist "${destination}/${HOSTNAME}_List.txt" "${destination}/${HOSTNAME}_Full_List.txt" "${filter}" ${mode}
+sort -V "${Helper}" >"${destination}/${HOSTNAME}_Filtered_List.txt"
+grep -oP "^$source\K.*" "${destination}/${HOSTNAME}_Filtered_List.txt" >"${tmpList}"
+
+if [ "${res}" == "S" ]; then
+  if [[ "${TYPE}" == "SSH" ]]; then
+#      parm=("${Helper}")
+    echo "Total Size: $(prettyFormat "$(sshHelper "${SOURCE_ARR}" "getRaw" "$(<"${Helper}")")")"
   else
-    while true; do
-      if [[ "${TYPE}" == "SSH" ]]; then
-        list="${destination}/${HOSTNAME}_Filtered_List.txt"
-        sourceSize=$(sshHelper "${SOURCE_ARR}" "getRaw" "$(<"${list}")")
-      else
-        FullList=${destination}/${HOSTNAME}_Filtered_List.txt
-        sourceSize=$(getRaw "$(<"${FullList}")")
-      fi
-      destinationFreeSize=$(df "${destination}" | sed 1d | tr -s " " | cut -d' ' -f4)
-      if [ "${sourceSize}" -gt "${destinationFreeSize}" ]; then
-        diff=$(("${sourceSize}" - "${destinationFreeSize}"))
-        neededSpace=$(prettyFormat $diff)
-        echo "There is not enough disk space on ${destination}, needs: ${neededSpace}"
-        break
-      fi
-
-      if [ "${res}" != Y ]; then
-        read -r -e -p "Are all the files in the same source dir? (Y=Yes, N=No): " ans
-      else
-        ans="Y"
-      fi
-
-      case $ans in
-      Y | y)
-        echo -e "\nThe backup process hes started in the background\nYou can watch the progress by using:\n\t tail -f ${destination}/${HOSTNAME}_Progress_log.log\n\n You will get a massage ones it's done"
-        (rsync -aRp --progress --files-from="${tmpList}" ${source} "${destination}" >"${destination}/${HOSTNAME}_Progress_log.log" 2>&1 && processDone && rm "${tmpList}" "${Helper}" >/dev/null 2>&1 && ([ $rename -eq 1 ] && rename && rm "${dirList}") && chown -R "$(logname)":"$(logname)" ${base_destination} >/dev/null 2>&1) &
-        disown
-        break
-        ;;
-
-      N | n)
-        echo -e "\nThe backup process hes started in the background\nYou can watch the progress by using:\n\t tail -f ${destination}/${HOSTNAME}_Progress_log.log\n\n You will get a massage ones it's done"
-        cd ${source} || exit
-        (rsync -aRp --progress "$(cat "${tmpList}")" "${destination}" >"${destination}/${HOSTNAME}_Progress_log.log" 2>&1 && processDone && rm "${tmpList}" "${Helper}" >/dev/null 2>&1 && ([ ${rename} -eq 1 ] && rename && rm "${dirList}") && chown -R "$(logname)":"$(logname)" ${base_destination} >/dev/null 2>&1) &
-        disown
-        break
-        ;;
-
-      *)
-        echo "You picked a non exiting option please try again"
-        ;;
-      esac
-    done
+    echo "Total Size: $(prettyFormat "$(getRaw "$(<"${Helper}")")")"
   fi
-}
+  echo "Number of files: $(wc <"${destination}/${HOSTNAME}_Filtered_List.txt" -l)"
+  #rm -rf "${tmpList}" "${Helper}" >/dev/null 2>&1
+else
+  while true; do
+    if [[ "${TYPE}" == "SSH" ]]; then
+      list="${destination}/${HOSTNAME}_Filtered_List.txt"
+      sourceSize=$(sshHelper "${SOURCE_ARR}" "getRaw" "$(<"${list}")")
+    else
+      FullList=${destination}/${HOSTNAME}_Filtered_List.txt
+      sourceSize=$(getRaw "$(<"${FullList}")")
+    fi
+    destinationFreeSize=$(df "${destination}" | sed 1d | tr -s " " | cut -d' ' -f4)
+    if [ "${sourceSize}" -gt "${destinationFreeSize}" ]; then
+      diff=$(("${sourceSize}" - "${destinationFreeSize}"))
+      neededSpace=$(prettyFormat $diff)
+      echo "There is not enough disk space on ${destination}, needs: ${neededSpace}"
+      break
+    fi
 
-main
+    if [ "${res}" != Y ]; then
+      read -r -e -p "Are all the files in the same source dir? (Y=Yes, N=No): " ans
+    else
+      ans="Y"
+    fi
+
+    case $ans in
+    Y | y)
+      echo -e "\nThe backup process hes started in the background\nYou can watch the progress by using:\n\t tail -f ${destination}/${HOSTNAME}_Progress_log.log\n\n You will get a massage ones it's done"
+      (rsync -aRp --progress --files-from="${tmpList}" ${source} "${destination}" >"${destination}/${HOSTNAME}_Progress_log.log" 2>&1 && processDone && rm "${tmpList}" "${Helper}" >/dev/null 2>&1 && ([ $rename -eq 1 ] && rename && rm "${dirList}") && chown -R "$(logname)":"$(logname)" ${base_destination} >/dev/null 2>&1) &
+      disown
+      break
+      ;;
+
+    N | n)
+      echo -e "\nThe backup process hes started in the background\nYou can watch the progress by using:\n\t tail -f ${destination}/${HOSTNAME}_Progress_log.log\n\n You will get a massage ones it's done"
+      cd ${source} || exit
+      (rsync -aRp --progress "$(cat "${tmpList}")" "${destination}" >"${destination}/${HOSTNAME}_Progress_log.log" 2>&1 && processDone && rm "${tmpList}" "${Helper}" >/dev/null 2>&1 && ([ ${rename} -eq 1 ] && rename && rm "${dirList}") && chown -R "$(logname)":"$(logname)" ${base_destination} >/dev/null 2>&1) &
+      disown
+      break
+      ;;
+
+    *)
+      echo "You picked a non exiting option please try again"
+      ;;
+    esac
+  done
+fi
+#}
+#
+#main
